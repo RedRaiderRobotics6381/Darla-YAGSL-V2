@@ -22,12 +22,18 @@ import edu.wpi.first.math.trajectory.Trajectory;
 import edu.wpi.first.math.util.Units;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
+import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.Timer;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Config;
 import frc.robot.Constants;
 import frc.robot.Constants.AutonConstants;
+import frc.robot.Constants.DrivebaseConstants;
+import frc.robot.subsystems.Vision.FiducialVision;
+import frc.robot.subsystems.Vision.ObjectVision;
+
 import java.io.File;
 import java.util.function.DoubleSupplier;
 import org.photonvision.PhotonCamera;
@@ -35,7 +41,9 @@ import org.photonvision.targeting.PhotonPipelineResult;
 import swervelib.SwerveController;
 import swervelib.SwerveDrive;
 import swervelib.SwerveDriveTest;
+import swervelib.SwerveModule;
 import swervelib.math.SwerveMath;
+import swervelib.parser.PIDFConfig;
 import swervelib.parser.SwerveControllerConfiguration;
 import swervelib.parser.SwerveDriveConfiguration;
 import swervelib.parser.SwerveParser;
@@ -48,7 +56,7 @@ public class SwerveSubsystem extends SubsystemBase
   /**
    * PhotonVision class to keep an accurate odometry.
    */
-  private       Vision              vision;
+  private       FiducialVision              fiducialVision;
   /**
    * Swerve drive object.
    */
@@ -90,9 +98,21 @@ public class SwerveSubsystem extends SubsystemBase
     {
       throw new RuntimeException(e);
     }
-    swerveDrive.setHeadingCorrection(false); // Heading correction should only be used while controlling the robot via angle.
-    swerveDrive.setCosineCompensator(false);//!SwerveDriveTelemetry.isSimulation); // Disables cosine compensation for simulations since it causes discrepancies not seen in real life.
+    // swerveDrive.setHeadingCorrection(false); // Heading correction should only be used while controlling the robot via angle.
+    // swerveDrive.setCosineCompensator(false);//!SwerveDriveTelemetry.isSimulation); // Disables cosine compensation for simulations since it causes discrepancies not seen in real life.
+    if (RobotBase.isSimulation() == true) {
+      swerveDrive.setHeadingCorrection(false);
+      swerveDrive.setCosineCompensator(false);
+    }
+    else{
+      swerveDrive.setHeadingCorrection(true);
+      swerveDrive.setCosineCompensator(true);  
+    }
     setupPathPlanner();
+    setupPhotonVision();
+    GetSwervePIDF();
+    //swerveDrive.pushOffsetsToEncoders();  // STOP - this will override the offset values stored on the encoders with the offset values from the JSON files.
+
   }
 
   /**
@@ -111,8 +131,9 @@ public class SwerveSubsystem extends SubsystemBase
    */
   public void setupPhotonVision()
   {
-    vision = new Vision(swerveDrive::getPose, swerveDrive.field);
-    vision.updatePoseEstimation(swerveDrive);
+    fiducialVision = new FiducialVision(swerveDrive::getPose, swerveDrive.field);
+    fiducialVision.updatePoseEstimation(swerveDrive);
+
   }
 
   /**
@@ -120,7 +141,7 @@ public class SwerveSubsystem extends SubsystemBase
    */
   public void updatePoseWithVision()
   {
-    vision.updatePoseEstimation(swerveDrive);
+    fiducialVision.updatePoseEstimation(swerveDrive);
   }
 
   /**
@@ -130,7 +151,7 @@ public class SwerveSubsystem extends SubsystemBase
    */
   public Pose2d getVisionPose()
   {
-    vision.updatePoseEstimation(swerveDrive);
+    fiducialVision.updatePoseEstimation(swerveDrive);
     return swerveDrive.getPose();
   }
 
@@ -140,7 +161,7 @@ public class SwerveSubsystem extends SubsystemBase
   public void setupPathPlanner()
   {
     AutoBuilder.configureHolonomic(
-        this::getPose, // Robot pose supplier
+        this::getVisionPose, // Robot pose supplier
         this::resetOdometry, // Method to reset odometry (will be called if your auto has a starting pose)
         this::getRobotVelocity, // ChassisSpeeds supplier. MUST BE ROBOT RELATIVE
         this::setChassisSpeeds, // Method that will drive the robot given ROBOT RELATIVE ChassisSpeeds
@@ -409,8 +430,12 @@ public class SwerveSubsystem extends SubsystemBase
   }
 
   @Override
-  public void periodic()
-  {
+  public void periodic() 
+{
+    ChangeSwervePIDF();
+    getVisionPose();
+    updatePoseWithVision();
+    fiducialVision.updateVisionField();
   }
 
   @Override
@@ -634,4 +659,104 @@ public class SwerveSubsystem extends SubsystemBase
   {
     swerveDrive.addVisionMeasurement(new Pose2d(3, 3, Rotation2d.fromDegrees(65)), Timer.getFPGATimestamp());
   }
+  
+  public void GetSwervePIDF() {
+  // ShuffleboardTab tab = Shuffleboard.getTab("Swerve PIDF");
+  swervelib.SwerveModule[] modules = swerveDrive.getModules();
+  for (SwerveModule module : modules)
+  {
+    // Shuffleboard.getTab("Swerve PIDF").add("Drive P: ", module.getDrivePIDF().p);
+    // Shuffleboard.getTab("Swerve PIDF").add("Drive I: ", module.getDrivePIDF().i);
+    // Shuffleboard.getTab("Swerve PIDF").add("Drive D: ", module.getDrivePIDF().d);
+    // Shuffleboard.getTab("Swerve PIDF").add("Drive F: ", module.getDrivePIDF().f);
+    // Shuffleboard.getTab("Swerve PIDF").add("Drive Iz: ", module.getDrivePIDF().iz);
+    // Shuffleboard.getTab("Swerve PIDF").add("Angle P: ", module.getAnglePIDF().p);
+    // Shuffleboard.getTab("Swerve PIDF").add("Angle I: ", module.getAnglePIDF().i);
+    // Shuffleboard.getTab("Swerve PIDF").add("Angle D: ", module.getAnglePIDF().d);
+    // Shuffleboard.getTab("Swerve PIDF").add("Angle F: ", module.getAnglePIDF().f);
+    // Shuffleboard.getTab("Swerve PIDF").add("Angle Iz: ", module.getAnglePIDF().iz);
+
+    SmartDashboard.putNumber("Drive P: ", module.getDrivePIDF().p);
+    SmartDashboard.putNumber("Drive I: ", module.getDrivePIDF().i);
+    SmartDashboard.putNumber("Drive D: ", module.getDrivePIDF().d);
+    SmartDashboard.putNumber("Drive F: ", module.getDrivePIDF().f);
+    SmartDashboard.putNumber("Angle P: ", module.getAnglePIDF().p);
+    SmartDashboard.putNumber("Angle I: ", module.getAnglePIDF().i);
+    SmartDashboard.putNumber("Angle D: ", module.getAnglePIDF().d);
+    SmartDashboard.putNumber("Angle F: ", module.getAnglePIDF().f);
+  }
+  }
+  public void SetSwervePIDF() {
+    swervelib.SwerveModule[] modules = swerveDrive.getModules();
+    for (SwerveModule module : modules)
+    {
+      PIDFConfig drivePIDFConfig = new PIDFConfig(DrivebaseConstants.DrivekP,
+                                                  DrivebaseConstants.DrivekI,
+                                                  DrivebaseConstants.DrivekD,
+                                                  DrivebaseConstants.DrivekF,
+                                                  DrivebaseConstants.DrivekIz);
+      
+      PIDFConfig anglePIDFConfig = new PIDFConfig(DrivebaseConstants.AnglekP,
+                                                  DrivebaseConstants.AnglekI,
+                                                  DrivebaseConstants.AnglekD,
+                                                  DrivebaseConstants.AnglekF,
+                                                  DrivebaseConstants.AnglekIz);
+
+      module.setDrivePIDF(drivePIDFConfig);
+      module.setAnglePIDF(anglePIDFConfig);
+
+      SmartDashboard.putNumber("Drive P: ", module.getDrivePIDF().p);
+      SmartDashboard.putNumber("Drive I: ", module.getDrivePIDF().i);
+      SmartDashboard.putNumber("Drive D: ", module.getDrivePIDF().d);
+      SmartDashboard.putNumber("Drive F: ", module.getDrivePIDF().f);
+      SmartDashboard.putNumber("Drive Iz: ", module.getDrivePIDF().iz);
+
+
+      SmartDashboard.putNumber("Angle P: ", module.getAnglePIDF().p);
+      SmartDashboard.putNumber("Angle I: ", module.getAnglePIDF().i);
+      SmartDashboard.putNumber("Angle D: ", module.getAnglePIDF().d);
+      SmartDashboard.putNumber("Angle F: ", module.getAnglePIDF().f);
+      SmartDashboard.putNumber("Angle Iz: ", module.getAnglePIDF().iz);
+    }
+  }
+  public void ChangeSwervePIDF() {
+        // read PID coefficients from SmartDashboard
+        double DriveP = SmartDashboard.getNumber("Drive P: ", 0);
+        double DriveI = SmartDashboard.getNumber("Drive I: ", 0);
+        double DriveD = SmartDashboard.getNumber("Drive D: ", 0);
+        double DriveF = SmartDashboard.getNumber("Drive F: ", 0);
+        double DriveIz = SmartDashboard.getNumber("Drive Iz: ", 0);
+        
+        double AngleP = SmartDashboard.getNumber("Angle P: ", 0);
+        double AngleI = SmartDashboard.getNumber("Angle I: ", 0);
+        double AngleD = SmartDashboard.getNumber("Angle D: ", 0);
+        double AngleF = SmartDashboard.getNumber("Angle F: ", 0);
+        double AngleIz = SmartDashboard.getNumber("Angle Iz: ", 0);
+
+        if(DriveP != DrivebaseConstants.DrivekP ||
+           DriveI != DrivebaseConstants.DrivekI ||
+           DriveD != DrivebaseConstants.DrivekD ||
+           DriveF != DrivebaseConstants.DrivekF ||
+           DriveIz != DrivebaseConstants.DrivekIz) {
+                                                    DrivebaseConstants.DrivekP = DriveP;
+                                                    DrivebaseConstants.DrivekI = DriveI;
+                                                    DrivebaseConstants.DrivekD = DriveD;
+                                                    DrivebaseConstants.DrivekF = DriveF;
+                                                    DrivebaseConstants.DrivekIz = DriveIz;
+        }
+
+        if(AngleP != DrivebaseConstants.AnglekP ||
+           AngleI != DrivebaseConstants.AnglekI ||
+           AngleD != DrivebaseConstants.AnglekD ||
+           AngleF != DrivebaseConstants.AnglekF ||
+           AngleIz != DrivebaseConstants.AnglekIz) {
+                                                    DrivebaseConstants.AnglekP = AngleP;
+                                                    DrivebaseConstants.AnglekI = AngleI;
+                                                    DrivebaseConstants.AnglekD = AngleD;
+                                                    DrivebaseConstants.AnglekF = AngleF;
+                                                    DrivebaseConstants.AnglekIz = AngleIz;
+          SetSwervePIDF();
+  }
+}
+
 }
