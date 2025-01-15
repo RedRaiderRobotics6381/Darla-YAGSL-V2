@@ -4,14 +4,23 @@
 
 package frc.robot.subsystems.swervedrive;
 
+import java.io.File;
+import java.util.Arrays;
+import java.util.function.DoubleSupplier;
+
+import org.photonvision.PhotonCamera;
+import org.photonvision.targeting.PhotonPipelineResult;
+
 import com.pathplanner.lib.auto.AutoBuilder;
 import com.pathplanner.lib.commands.PathPlannerAuto;
 import com.pathplanner.lib.path.PathConstraints;
 import com.pathplanner.lib.path.PathPlannerPath;
 import com.pathplanner.lib.util.HolonomicPathFollowerConfig;
 import com.pathplanner.lib.util.ReplanningConfig;
+
 import edu.wpi.first.apriltag.AprilTagFieldLayout;
 import edu.wpi.first.apriltag.AprilTagFields;
+import edu.wpi.first.math.controller.SimpleMotorFeedforward;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Pose3d;
 import edu.wpi.first.math.geometry.Rotation2d;
@@ -22,26 +31,18 @@ import edu.wpi.first.math.trajectory.Trajectory;
 import edu.wpi.first.math.util.Units;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
-import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Config;
 import frc.robot.Constants;
 import frc.robot.Constants.AutonConstants;
-import frc.robot.Constants.DrivebaseConstants;
-import frc.robot.subsystems.Vision.FiducialVision;
-import frc.robot.subsystems.Vision.ObjectVision;
-
-import java.io.File;
-import java.util.function.DoubleSupplier;
-import org.photonvision.PhotonCamera;
-import org.photonvision.targeting.PhotonPipelineResult;
+import frc.robot.subsystems.Vision.Vision;
 import swervelib.SwerveController;
 import swervelib.SwerveDrive;
 import swervelib.SwerveDriveTest;
-import swervelib.SwerveModule;
 import swervelib.math.SwerveMath;
 import swervelib.parser.PIDFConfig;
 import swervelib.parser.SwerveControllerConfiguration;
@@ -56,7 +57,7 @@ public class SwerveSubsystem extends SubsystemBase
   /**
    * PhotonVision class to keep an accurate odometry.
    */
-  private       FiducialVision              fiducialVision;
+  private       Vision  vision;
   /**
    * Swerve drive object.
    */
@@ -65,6 +66,10 @@ public class SwerveSubsystem extends SubsystemBase
    * AprilTag field layout.
    */
   private final AprilTagFieldLayout aprilTagFieldLayout = AprilTagFields.k2024Crescendo.loadAprilTagLayoutField();
+  /**
+   * Enable vision odometry updates while driving.
+   */
+  private final boolean visionDriveTest = false;
 
   /**
    * Initialize {@link SwerveDrive} with the directory provided.
@@ -98,21 +103,21 @@ public class SwerveSubsystem extends SubsystemBase
     {
       throw new RuntimeException(e);
     }
-    // swerveDrive.setHeadingCorrection(false); // Heading correction should only be used while controlling the robot via angle.
-    // swerveDrive.setCosineCompensator(false);//!SwerveDriveTelemetry.isSimulation); // Disables cosine compensation for simulations since it causes discrepancies not seen in real life.
-    if (RobotBase.isSimulation() == true) {
-      swerveDrive.setHeadingCorrection(false);
-      swerveDrive.setCosineCompensator(false);
-    }
-    else{
-      swerveDrive.setHeadingCorrection(true);
-      swerveDrive.setCosineCompensator(true);  
+    swerveDrive.setHeadingCorrection(false); // Heading correction should only be used while controlling the robot via angle.
+    swerveDrive.setCosineCompensator(false);//!SwerveDriveTelemetry.isSimulation); // Disables cosine compensation for simulations since it causes discrepancies not seen in real life.
+    swerveDrive.setAngularVelocityCompensation(true,
+                                               true,
+                                               0.1); //Correct for skew that gets worse as angular velocity increases. Start with a coefficient of 0.1.
+    swerveDrive.setModuleEncoderAutoSynchronize(false,
+                                                1); // Enable if you want to resynchronize your absolute encoders and motor encoders periodically when they are not moving.
+    swerveDrive.pushOffsetsToEncoders(); // Set the absolute encoder to be used over the internal encoder and push the offsets onto it. Throws warning if not possible
+    if (visionDriveTest)
+    {
+      setupPhotonVision();
+      // Stop the odometry thread if we are using vision that way we can synchronize updates better.
+      swerveDrive.stopOdometryThread();
     }
     setupPathPlanner();
-    setupPhotonVision();
-    GetSwervePIDF();
-    //swerveDrive.pushOffsetsToEncoders();  // STOP - this will override the offset values stored on the encoders with the offset values from the JSON files.
-
   }
 
   /**
@@ -131,28 +136,23 @@ public class SwerveSubsystem extends SubsystemBase
    */
   public void setupPhotonVision()
   {
-    fiducialVision = new FiducialVision(swerveDrive::getPose, swerveDrive.field);
-    fiducialVision.updatePoseEstimation(swerveDrive);
-
+    vision = new Vision(swerveDrive::getPose, swerveDrive.field);
   }
 
-  /**
-   * Update the pose estimation with vision data.
-   */
-  public void updatePoseWithVision()
+  @Override
+  public void periodic()
   {
-    fiducialVision.updatePoseEstimation(swerveDrive);
+    // When vision is enabled we must manually update odometry in SwerveDrive
+    if (visionDriveTest)
+    {
+      swerveDrive.updateOdometry();
+      vision.updatePoseEstimation(swerveDrive);
+    }
   }
 
-  /**
-   * Get the pose while updating with vision readings.
-   *
-   * @return The robots pose with the vision estimates in place.
-   */
-  public Pose2d getVisionPose()
+  @Override
+  public void simulationPeriodic()
   {
-    fiducialVision.updatePoseEstimation(swerveDrive);
-    return swerveDrive.getPose();
   }
 
   /**
@@ -161,7 +161,7 @@ public class SwerveSubsystem extends SubsystemBase
   public void setupPathPlanner()
   {
     AutoBuilder.configureHolonomic(
-        this::getVisionPose, // Robot pose supplier
+        this::getPose, // Robot pose supplier
         this::resetOdometry, // Method to reset odometry (will be called if your auto has a starting pose)
         this::getRobotVelocity, // ChassisSpeeds supplier. MUST BE ROBOT RELATIVE
         this::setChassisSpeeds, // Method that will drive the robot given ROBOT RELATIVE ChassisSpeeds
@@ -367,6 +367,57 @@ public class SwerveSubsystem extends SubsystemBase
   }
 
   /**
+   * Returns a Command that centers the modules of the SwerveDrive subsystem.
+   *
+   * @return a Command that centers the modules of the SwerveDrive subsystem
+   */
+  public Command centerModulesCommand()
+  {
+    return run(() -> Arrays.asList(swerveDrive.getModules())
+                           .forEach(it -> it.setAngle(0.0)));
+  }
+
+  /**
+   * Returns a Command that drives the swerve drive to a specific distance at a given speed.
+   *
+   * @param distanceInMeters       the distance to drive in meters
+   * @param speedInMetersPerSecond the speed at which to drive in meters per second
+   * @return a Command that drives the swerve drive to a specific distance at a given speed
+   */
+  public Command driveToDistanceCommand(double distanceInMeters, double speedInMetersPerSecond)
+  {
+    return Commands.deferredProxy(
+        () -> Commands.run(() -> drive(new ChassisSpeeds(speedInMetersPerSecond, 0, 0)), this)
+                      .until(() -> swerveDrive.getPose().getTranslation().getDistance(new Translation2d(0, 0)) >
+                                   distanceInMeters)
+                                 );
+  }
+
+  /**
+   * Sets the maximum speed of the swerve drive.
+   *
+   * @param maximumSpeedInMetersPerSecond the maximum speed to set for the swerve drive in meters per second
+   */
+  public void setMaximumSpeed(double maximumSpeedInMetersPerSecond)
+  {
+    swerveDrive.setMaximumSpeed(maximumSpeedInMetersPerSecond,
+                                false,
+                                swerveDrive.swerveDriveConfiguration.physicalCharacteristics.optimalVoltage);
+  }
+
+  /**
+   * Replaces the swerve module feedforward with a new SimpleMotorFeedforward object.
+   *
+   * @param kS the static gain of the feedforward
+   * @param kV the velocity gain of the feedforward
+   * @param kA the acceleration gain of the feedforward
+   */
+  public void replaceSwerveModuleFeedforward(double kS, double kV, double kA)
+  {
+    swerveDrive.replaceSwerveModuleFeedforward(new SimpleMotorFeedforward(kS, kV, kA));
+  }
+
+  /**
    * Command to drive the robot using translative values and heading as angular velocity.
    *
    * @param translationX     Translation in the X direction. Cubed for smoother controls.
@@ -429,19 +480,6 @@ public class SwerveSubsystem extends SubsystemBase
     swerveDrive.drive(velocity);
   }
 
-  @Override
-  public void periodic() 
-{
-    ChangeSwervePIDF();
-    getVisionPose();
-    updatePoseWithVision();
-    fiducialVision.updateVisionField();
-  }
-
-  @Override
-  public void simulationPeriodic()
-  {
-  }
 
   /**
    * Get the swerve drive kinematics object.
@@ -659,104 +697,4 @@ public class SwerveSubsystem extends SubsystemBase
   {
     swerveDrive.addVisionMeasurement(new Pose2d(3, 3, Rotation2d.fromDegrees(65)), Timer.getFPGATimestamp());
   }
-  
-  public void GetSwervePIDF() {
-  // ShuffleboardTab tab = Shuffleboard.getTab("Swerve PIDF");
-  swervelib.SwerveModule[] modules = swerveDrive.getModules();
-  for (SwerveModule module : modules)
-  {
-    // Shuffleboard.getTab("Swerve PIDF").add("Drive P: ", module.getDrivePIDF().p);
-    // Shuffleboard.getTab("Swerve PIDF").add("Drive I: ", module.getDrivePIDF().i);
-    // Shuffleboard.getTab("Swerve PIDF").add("Drive D: ", module.getDrivePIDF().d);
-    // Shuffleboard.getTab("Swerve PIDF").add("Drive F: ", module.getDrivePIDF().f);
-    // Shuffleboard.getTab("Swerve PIDF").add("Drive Iz: ", module.getDrivePIDF().iz);
-    // Shuffleboard.getTab("Swerve PIDF").add("Angle P: ", module.getAnglePIDF().p);
-    // Shuffleboard.getTab("Swerve PIDF").add("Angle I: ", module.getAnglePIDF().i);
-    // Shuffleboard.getTab("Swerve PIDF").add("Angle D: ", module.getAnglePIDF().d);
-    // Shuffleboard.getTab("Swerve PIDF").add("Angle F: ", module.getAnglePIDF().f);
-    // Shuffleboard.getTab("Swerve PIDF").add("Angle Iz: ", module.getAnglePIDF().iz);
-
-    SmartDashboard.putNumber("Drive P: ", module.getDrivePIDF().p);
-    SmartDashboard.putNumber("Drive I: ", module.getDrivePIDF().i);
-    SmartDashboard.putNumber("Drive D: ", module.getDrivePIDF().d);
-    SmartDashboard.putNumber("Drive F: ", module.getDrivePIDF().f);
-    SmartDashboard.putNumber("Angle P: ", module.getAnglePIDF().p);
-    SmartDashboard.putNumber("Angle I: ", module.getAnglePIDF().i);
-    SmartDashboard.putNumber("Angle D: ", module.getAnglePIDF().d);
-    SmartDashboard.putNumber("Angle F: ", module.getAnglePIDF().f);
-  }
-  }
-  public void SetSwervePIDF() {
-    swervelib.SwerveModule[] modules = swerveDrive.getModules();
-    for (SwerveModule module : modules)
-    {
-      PIDFConfig drivePIDFConfig = new PIDFConfig(DrivebaseConstants.DrivekP,
-                                                  DrivebaseConstants.DrivekI,
-                                                  DrivebaseConstants.DrivekD,
-                                                  DrivebaseConstants.DrivekF,
-                                                  DrivebaseConstants.DrivekIz);
-      
-      PIDFConfig anglePIDFConfig = new PIDFConfig(DrivebaseConstants.AnglekP,
-                                                  DrivebaseConstants.AnglekI,
-                                                  DrivebaseConstants.AnglekD,
-                                                  DrivebaseConstants.AnglekF,
-                                                  DrivebaseConstants.AnglekIz);
-
-      module.setDrivePIDF(drivePIDFConfig);
-      module.setAnglePIDF(anglePIDFConfig);
-
-      SmartDashboard.putNumber("Drive P: ", module.getDrivePIDF().p);
-      SmartDashboard.putNumber("Drive I: ", module.getDrivePIDF().i);
-      SmartDashboard.putNumber("Drive D: ", module.getDrivePIDF().d);
-      SmartDashboard.putNumber("Drive F: ", module.getDrivePIDF().f);
-      SmartDashboard.putNumber("Drive Iz: ", module.getDrivePIDF().iz);
-
-
-      SmartDashboard.putNumber("Angle P: ", module.getAnglePIDF().p);
-      SmartDashboard.putNumber("Angle I: ", module.getAnglePIDF().i);
-      SmartDashboard.putNumber("Angle D: ", module.getAnglePIDF().d);
-      SmartDashboard.putNumber("Angle F: ", module.getAnglePIDF().f);
-      SmartDashboard.putNumber("Angle Iz: ", module.getAnglePIDF().iz);
-    }
-  }
-  public void ChangeSwervePIDF() {
-        // read PID coefficients from SmartDashboard
-        double DriveP = SmartDashboard.getNumber("Drive P: ", 0);
-        double DriveI = SmartDashboard.getNumber("Drive I: ", 0);
-        double DriveD = SmartDashboard.getNumber("Drive D: ", 0);
-        double DriveF = SmartDashboard.getNumber("Drive F: ", 0);
-        double DriveIz = SmartDashboard.getNumber("Drive Iz: ", 0);
-        
-        double AngleP = SmartDashboard.getNumber("Angle P: ", 0);
-        double AngleI = SmartDashboard.getNumber("Angle I: ", 0);
-        double AngleD = SmartDashboard.getNumber("Angle D: ", 0);
-        double AngleF = SmartDashboard.getNumber("Angle F: ", 0);
-        double AngleIz = SmartDashboard.getNumber("Angle Iz: ", 0);
-
-        if(DriveP != DrivebaseConstants.DrivekP ||
-           DriveI != DrivebaseConstants.DrivekI ||
-           DriveD != DrivebaseConstants.DrivekD ||
-           DriveF != DrivebaseConstants.DrivekF ||
-           DriveIz != DrivebaseConstants.DrivekIz) {
-                                                    DrivebaseConstants.DrivekP = DriveP;
-                                                    DrivebaseConstants.DrivekI = DriveI;
-                                                    DrivebaseConstants.DrivekD = DriveD;
-                                                    DrivebaseConstants.DrivekF = DriveF;
-                                                    DrivebaseConstants.DrivekIz = DriveIz;
-        }
-
-        if(AngleP != DrivebaseConstants.AnglekP ||
-           AngleI != DrivebaseConstants.AnglekI ||
-           AngleD != DrivebaseConstants.AnglekD ||
-           AngleF != DrivebaseConstants.AnglekF ||
-           AngleIz != DrivebaseConstants.AnglekIz) {
-                                                    DrivebaseConstants.AnglekP = AngleP;
-                                                    DrivebaseConstants.AnglekI = AngleI;
-                                                    DrivebaseConstants.AnglekD = AngleD;
-                                                    DrivebaseConstants.AnglekF = AngleF;
-                                                    DrivebaseConstants.AnglekIz = AngleIz;
-          SetSwervePIDF();
-  }
-}
-
 }

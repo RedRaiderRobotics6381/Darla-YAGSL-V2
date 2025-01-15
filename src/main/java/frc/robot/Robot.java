@@ -154,7 +154,7 @@ public class Robot extends TimedRobot
   public void teleopPeriodic()
   {
     m_robotContainer.spencerButtons();
-    m_ObjectVision.watchForNote(); 
+    m_ObjectVision.watchForNote();
   }
 
   @Override

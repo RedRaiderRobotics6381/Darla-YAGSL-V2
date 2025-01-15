@@ -43,7 +43,7 @@ import swervelib.telemetry.Alert.AlertType;
  * Example PhotonVision class to aid in the pursuit of accurate odometry. Taken from
  * https://gitlab.com/ironclad_code/ironclad-2024/-/blob/master/src/main/java/frc/robot/vision/Vision.java?ref_type=heads
  */
-public class FiducialVision
+public class Vision
 {
 
   /**
@@ -77,7 +77,7 @@ public class FiducialVision
    * @param currentPose Current pose supplier, should reference {@link SwerveDrive#getPose()}
    * @param field       Current field, should be {@link SwerveDrive#field}
    */
-  public FiducialVision(Supplier<Pose2d> currentPose, Field2d field)
+  public Vision(Supplier<Pose2d> currentPose, Field2d field)
   {
     this.currentPose = currentPose;
     this.field2d = field;
@@ -163,7 +163,7 @@ public class FiducialVision
   }
 
   /**
-   * The standard deviations of the estimated pose from {@link FiducialVision#getEstimatedGlobalPose(Cameras)}, for use with
+   * The standard deviations of the estimated pose from {@link Vision#getEstimatedGlobalPose(Cameras)}, for use with
    * {@link edu.wpi.first.math.estimator.SwerveDrivePoseEstimator SwerveDrivePoseEstimator}. This should only be used
    * when there are targets visible.
    *
@@ -218,7 +218,7 @@ public class FiducialVision
    * @param pose Estimated robot pose.
    * @return Could be empty if there isn't a good reading.
    */
-  private Optional<EstimatedRobotPose> filterPose(Optional<EstimatedRobotPose> pose)
+  Optional<EstimatedRobotPose> filterPose(Optional<EstimatedRobotPose> pose)
   {
     if (pose.isPresent())
     {
@@ -397,10 +397,10 @@ public class FiducialVision
      * April Tag Low Camera
      */
     APR_TG_LOW_CAM("camAprTgLow",
-               new Rotation3d(0, Units.degreesToRadians(-20), 0),
+               new Rotation3d(0, Units.degreesToRadians(-20), Units.degreesToRadians(180)),
                new Translation3d(Units.inchesToMeters(0.0),
                                  Units.inchesToMeters(0.0),
-                                 Units.inchesToMeters(14.0)),
+                                 Units.inchesToMeters(14.0)), 
                VecBuilder.fill(4, 4, 8), VecBuilder.fill(0.5, 0.5, 1));
 
     /**
@@ -446,7 +446,7 @@ public class FiducialVision
       // https://docs.wpilib.org/en/stable/docs/software/basic-programming/coordinate-system.html
       robotToCamTransform = new Transform3d(robotToCamTranslation, robotToCamRotation);
 
-      poseEstimator = new PhotonPoseEstimator(FiducialVision.fieldLayout,
+      poseEstimator = new PhotonPoseEstimator(Vision.fieldLayout,
                                               PoseStrategy.MULTI_TAG_PNP_ON_COPROCESSOR,
                                               camera,
                                               robotToCamTransform);
